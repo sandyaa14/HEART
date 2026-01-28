@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HEART - Emotion AI</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            --glass-bg: rgba(255, 255, 255, 0.03);
+            --glass-border: 1px solid rgba(255, 255, 255, 0.1);
+            --primary: #38bdf8;
+            --secondary: #818cf8;
+            --accent: #f472b6;
+            --text-main: #f8fafc;
+            --text-mute: #94a3b8;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background: var(--bg-gradient);
+            min-height: 100vh;
+            color: var(--text-main);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 40px 20px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 1000px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            border: var(--glass-border);
+            border-radius: 24px;
+            overflow: hidden;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+
+        /* Hero Header */
+        .header {
+            text-align: center;
+            padding: 50px 20px;
+            background: radial-gradient(circle at top, rgba(56, 189, 248, 0.1), transparent 70%);
+        }
+
+        .header h1 {
+            font-size: 3.5rem;
+            font-weight: 800;
+            letter-spacing: -2px;
+            background: linear-gradient(to right, #38bdf8, #818cf8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            color: var(--text-mute);
+            font-size: 1.2rem;
+            font-weight: 300;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+
+        .tab-btn {
+            background: rgba(255, 255, 255, 0.05);
+            border: var(--glass-border);
+            color: var(--text-mute);
+            padding: 12px 30px;
+            border-radius: 50px;
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .tab-btn.active {
+            background: var(--primary);
+            color: #000;
+            box-shadow: 0 0 20px rgba(56, 189, 248, 0.4);
+            border-color: transparent;
+        }
+
+        .tab-btn:hover:not(.active) {
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+        }
+
+        .tab-content {
+            display: none;
+            animation: fadeIn 0.4s ease;
+            padding: 0 40px 40px;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Recording UI */
+        .record-circle {
+            width: 120px;
+            height: 120px;
+            margin: 0 auto 30px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 2px solid var(--primary);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            box-shadow: 0 0 30px rgba(56, 189, 248, 0.2);
+            font-size: 3rem;
+            transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        .record-circle:hover {
+            transform: scale(1.1);
+            box-shadow: 0 0 50px rgba(56, 189, 248, 0.4);
+        }
+
+        .record-circle.recording {
+            background: #ef4444;
+            border-color: #ef4444;
+            animation: pulse 1.5s infinite;
+        }
+
+        .timer {
+            font-family: monospace;
+            font-size: 1.5rem;
+            color: var(--text-mute);
+            text-align: center;
+            margin-bottom: 20px;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .timer.visible {
+            opacity: 1;
+        }
+
+        /* Visualizer */
+        .visualizer-container {
+            width: 100%;
+            height: 120px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 12px;
+            overflow: hidden;
+            margin-top: 20px;
+            border: var(--glass-border);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* Upload UI */
+        .upload-area {
+            border: 2px dashed rgba(255, 255, 255, 0.2);
+            border-radius: 16px;
+            padding: 60px;
+            text-align: center;
+            transition: all 0.3s;
+            cursor: pointer;
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .upload-area:hover {
+            border-color: var(--primary);
+            background: rgba(56, 189, 248, 0.05);
+        }
+
+        /* Results */
+        .results-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 40px;
+        }
+
+        .result-card {
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.01) 100%);
+            border: var(--glass-border);
+            padding: 30px;
+            border-radius: 20px;
+            text-align: center;
+        }
+
+        .result-title {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            color: var(--text-mute);
+            margin-bottom: 15px;
+        }
+
+        .result-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: white;
+            text-shadow: 0 0 20px rgba(255, 255, 255, 0.2);
+        }
+
+        .confidence-bg {
+            height: 6px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+            margin-top: 20px;
+            overflow: hidden;
+        }
+
+        .confidence-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--primary), var(--secondary));
+            width: 0%;
+            transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        /* Forensics Button */
+        .forensics-btn-container {
+            margin-top: 40px;
+            text-align: center;
+        }
+
+        .forensics-btn {
+            background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+            border: none;
+            color: white;
+            padding: 16px 40px;
+            font-size: 1.1rem;
+            border-radius: 12px;
+            cursor: pointer;
+            font-weight: 600;
+            box-shadow: 0 10px 30px rgba(139, 92, 246, 0.3);
+            transition: all 0.3s;
+            display: none;
+            /* Hidden */
+        }
+
+        .forensics-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 15px 40px rgba(139, 92, 246, 0.5);
+        }
+
+        /* History */
+        .history-panel {
+            margin-top: 40px;
+            padding-top: 40px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .history-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 15px;
+            margin-bottom: 10px;
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 10px;
+            border: var(--glass-border);
+            font-size: 0.9rem;
+            color: var(--text-mute);
+        }
+
+        /* MODAL */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(10px);
+            z-index: 100;
+            display: none;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-body {
+            background: #0f172a;
+            border: 1px solid #334155;
+            width: 95%;
+            max-width: 1100px;
+            height: 85vh;
+            border-radius: 24px;
+            padding: 40px;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+            box-shadow: 0 0 100px rgba(56, 189, 248, 0.2);
+        }
+
+        .modal-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+
+        .close-modal {
+            background: none;
+            border: none;
+            color: #64748b;
+            font-size: 2rem;
+            cursor: pointer;
+        }
+
+        .close-modal:hover {
+            color: white;
+        }
+
+        @keyframes pulse {
+            0% {
+                box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+            }
+
+            70% {
+                box-shadow: 0 0 0 20px rgba(239, 68, 68, 0);
+            }
+
+            100% {
+                box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+            }
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <div class="header">
+            <h1>H.E.A.R.T</h1>
+            <p>Advanced Emotion & Gender Recognition System</p>
+        </div>
+
+        <div class="tabs">
+            <div class="tab-btn active" onclick="setMode('record')">Microphone</div>
+            <div class="tab-btn" onclick="setMode('upload')">File Upload</div>
+        </div>
+
+        <!-- Record View -->
+        <div id="view-record" class="tab-content active">
+            <div class="timer" id="timerDisplay">00:00</div>
+            <div class="record-circle" id="micBtn" onclick="toggleRecording()">
+                🎤
+            </div>
+            <p style="text-align: center; color: var(--text-mute);">Tap to Record • Tap again to Analyze</p>
+
+            <div class="visualizer-container">
+                <canvas id="waveformCanvas" width="800" height="120"></canvas>
+            </div>
+        </div>
+
+        <!-- Upload View -->
+        <div id="view-upload" class="tab-content">
+            <div class="upload-area" onclick="document.getElementById('hiddenFile').click()">
+                <div style="font-size: 3rem; margin-bottom: 20px;">📁</div>
+                <h3>Drop Audio File or Browse</h3>
+                <p style="color: var(--text-mute); margin-top: 10px;">Supports WAV, MP3, M4A</p>
+                <input type="file" id="hiddenFile" hidden accept="audio/*" onchange="handleFile(this.files[0])">
+            </div>
+        </div>
+
+        <!-- STATUS -->
+        <div id="statusText"
+            style="text-align: center; margin: 20px 0; color: var(--primary); font-weight: 600; min-height: 24px;">
+        </div>
+
+        <!-- RESULTS -->
+        <div class="tab-content active" style="padding-top: 0;">
+            <div class="results-grid">
+                <div class="result-card">
+                    <div class="result-title">Detected Gender</div>
+                    <div class="result-value" id="resGender">--</div>
+                    <div class="confidence-bg">
+                        <div class="confidence-fill" id="confGender"></div>
+                    </div>
+                </div>
+                <div class="result-card">
+                    <div class="result-title">Detected Emotion</div>
+                    <div class="result-value" id="resEmotion">--</div>
+                    <div class="confidence-bg">
+                        <div class="confidence-fill" id="confEmotion"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="forensics-btn-container">
+                <button id="btnForensics" class="forensics-btn" onclick="showModal()">
+                    🔬 Open Voice Forensics Lab
+                </button>
+            </div>
+        </div>
+
+        <!-- HISTORY -->
+        <div class="history-panel" style="padding: 30px;">
+            <h3 style="color: var(--text-mute); margin-bottom: 20px;">Recent Activity</h3>
+            <div id="historyRows"></div>
+        </div>
+    </div>
+
+    <!-- FULLSCREEN MODAL -->
+    <div id="labModal" class="modal-overlay">
+        <div class="modal-body">
+            <div class="modal-top">
+                <h2>Voice Lab</h2>
+                <button class="close-modal" onclick="hideModal()">&times;</button>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 40px; height: 100%;">
+                <!-- Radar -->
+                <div
+                    style="background: rgba(255,255,255,0.03); border-radius: 20px; padding: 30px; display: flex; flex-direction: column; align-items: center;">
+                    <h3 style="color: var(--primary); margin-bottom: 20px;">Emotion Signature</h3>
+                    <div style="width: 100%; height: 400px; position: relative;">
+                        <canvas id="radarCanvas"></canvas>
+                    </div>
+                </div>
+
+                <!-- Metrics -->
+                <div style="display: flex; flex-direction: column; gap: 20px;">
+                    <div class="result-card"
+                        style="text-align: left; display: flex; align-items: center; justify-content: space-between;">
+                        <div>
+                            <div class="result-title">Fundamental Frequency</div>
+                            <div class="result-value" id="metricPitch">0 Hz</div>
+                        </div>
+                        <div style="font-size: 2rem; opacity: 0.5;">〰️</div>
+                    </div>
+                    <div class="result-card"
+                        style="text-align: left; display: flex; align-items: center; justify-content: space-between;">
+                        <div>
+                            <div class="result-title">Vocal Intensity (RMS)</div>
+                            <div class="result-value" id="metricRMS">0.00</div>
+                        </div>
+                        <div style="font-size: 2rem; opacity: 0.5;">🔊</div>
+                    </div>
+                    <div class="result-card"
+                        style="text-align: left; display: flex; align-items: center; justify-content: space-between;">
+                        <div>
+                            <div class="result-title">Signal Clarity (ZCR)</div>
+                            <div class="result-value" id="metricZCR">0.00</div>
+                        </div>
+                        <div style="font-size: 2rem; opacity: 0.5;">📊</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /* =========================================
+           LOGIC CORE (Preserved & Enhanced)
+           ========================================= */
+        let isRecording = false;
+        let mediaRecorder;
+        let audioChunks = [];
+        let audioCtx, analyser, source, rafId;
+        let startTime, timerInterval;
+        let currentData = null; // Holds analysis for modal
+
+        // WAV Encoder (WebM -> WAV fix)
+        function encodeWAV(audioBuffer) {
+            const numChannels = 1;
+            const sampleRate = audioBuffer.sampleRate;
+            const format = 1;
+            const bitDepth = 16;
+            let samples = audioBuffer.getChannelData(0);
+            // Mixdown if needed
+            if (audioBuffer.numberOfChannels > 1) {
+                const c2 = audioBuffer.getChannelData(1);
+                for (let i = 0; i < samples.length; i++) samples[i] = (samples[i] + c2[i]) / 2;
+            }
+            const buffer = new ArrayBuffer(44 + samples.length * 2);
+            const view = new DataView(buffer);
+            const writeS = (o, s) => { for (let i = 0; i < s.length; i++) view.setUint8(o + i, s.charCodeAt(i)); };
+            writeS(0, 'RIFF'); view.setUint32(4, 36 + samples.length * 2, true); writeS(8, 'WAVE');
+            writeS(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, format, true);
+            view.setUint16(22, numChannels, true); view.setUint32(24, sampleRate, true);
+            view.setUint32(28, sampleRate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, bitDepth, true);
+            writeS(36, 'data'); view.setUint32(40, samples.length * 2, true);
+
+            let offset = 44;
+            for (let i = 0; i < samples.length; i++, offset += 2) {
+                const s = Math.max(-1, Math.min(1, samples[i]));
+                view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+            }
+            return new Blob([view], { type: 'audio/wav' });
+        }
+
+        // UI Functions
+        function setMode(mode) {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
+            document.querySelector(`.results-grid`).parentElement.style.display = 'block'; // Keep results visible
+
+            if (mode === 'record') {
+                document.querySelectorAll('.tab-btn')[0].classList.add('active');
+                document.getElementById('view-record').style.display = 'block';
+            } else {
+                document.querySelectorAll('.tab-btn')[1].classList.add('active');
+                document.getElementById('view-upload').style.display = 'block';
+                if (isRecording) toggleRecording(); // Stop if switching
+            }
+        }
+        setMode('record'); // Init
+
+        async function toggleRecording() {
+            const btn = document.getElementById('micBtn');
+            if (!isRecording) {
+                // Start
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    startVisualizer(stream);
+
+                    mediaRecorder = new MediaRecorder(stream);
+                    audioChunks = [];
+                    mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+                    mediaRecorder.onstop = processRecording;
+                    mediaRecorder.start();
+
+                    isRecording = true;
+                    btn.classList.add('recording');
+                    btn.innerHTML = '⏹'; // Stop icon
+
+                    // Timer
+                    document.getElementById('timerDisplay').classList.add('visible');
+                    startTime = Date.now();
+                    timerInterval = setInterval(() => {
+                        const s = Math.floor((Date.now() - startTime) / 1000);
+                        const m = Math.floor(s / 60);
+                        document.getElementById('timerDisplay').textContent = `${m}:${(s % 60).toString().padStart(2, '0')}`;
+                    }, 1000);
+
+                } catch (e) { alert("Mic Error: " + e.message); }
+            } else {
+                // Stop
+                mediaRecorder.stop();
+                isRecording = false;
+                btn.classList.remove('recording');
+                btn.innerHTML = '🎤';
+                stopVisualizer();
+                clearInterval(timerInterval);
+                document.getElementById('timerDisplay').classList.remove('visible');
+            }
+        }
+
+        async function processRecording() {
+            setStatus('Processing Audio...', true);
+            try {
+                const blob = new Blob(audioChunks, { type: 'audio/webm' });
+                // Convert to WAV
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const ab = await blob.arrayBuffer();
+                const audioBuf = await ctx.decodeAudioData(ab);
+                const wavBlob = encodeWAV(audioBuf);
+                ctx.close();
+
+                handleFile(wavBlob); // Reuse handler
+            } catch (e) {
+                setStatus("Conversion Failed", false);
+                console.error(e);
+            }
+        }
+
+        // Visualizer
+        function startVisualizer(stream) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            source = audioCtx.createMediaStreamSource(stream);
+            analyser = audioCtx.createAnalyser();
+            source.connect(analyser);
+            analyser.fftSize = 256;
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+            const canvas = document.getElementById('waveformCanvas');
+            const ctx = canvas.getContext('2d');
+
+            function draw() {
+                rafId = requestAnimationFrame(draw);
+                analyser.getByteFrequencyData(dataArray);
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                const barW = (canvas.width / bufferLength) * 2;
+                let x = 0;
+                for (let i = 0; i < bufferLength; i++) {
+                    const h = (dataArray[i] / 255) * canvas.height;
+                    ctx.fillStyle = `rgba(56, 189, 248, ${dataArray[i] / 255})`;
+                    ctx.fillRect(x, (canvas.height - h) / 2, barW, h); // Center bars
+                    x += barW + 1;
+                }
+            }
+            draw();
+        }
+        function stopVisualizer() {
+            cancelAnimationFrame(rafId);
+            if (audioCtx) audioCtx.close();
+            const c = document.getElementById('waveformCanvas');
+            c.getContext('2d').clearRect(0, 0, c.width, c.height);
+        }
+
+        // API Handler
+        async function handleFile(file) {
+            if (!file) return;
+            setStatus('Analyzing...', true);
+            document.getElementById('btnForensics').style.display = 'none';
+
+            const fd = new FormData();
+            fd.append('file', file, file.name || 'recording.wav');
+
+            try {
+                const [gen, emo, info] = await Promise.all([
+                    fetch('/predict_gender', { method: 'POST', body: fd }).then(r => r.json()),
+                    fetch('/predict_emotion', { method: 'POST', body: fd }).then(r => r.json()),
+                    fetch('/get_audio_info', { method: 'POST', body: fd }).then(r => r.json())
+                ]);
+
+                // Update UI
+                document.getElementById('resGender').textContent = gen.gender;
+                document.getElementById('confGender').style.width = (gen.confidence * 100) + '%';
+
+                document.getElementById('resEmotion').textContent = emo.emotion;
+                document.getElementById('confEmotion').style.width = (emo.confidence * 100) + '%';
+
+                setStatus('Analysis Complete', false);
+
+                currentData = { gen, emo, info };
+                document.getElementById('btnForensics').style.display = 'inline-block';
+
+                addToHistory(gen.gender, emo.emotion);
+
+            } catch (e) {
+                setStatus('Error: ' + e.message, false);
+            }
+        }
+
+        function setStatus(msg, loading) {
+            const el = document.getElementById('statusText');
+            el.textContent = msg;
+            el.style.opacity = loading ? 0.7 : 1;
+            if (loading) el.innerHTML += ' <span style="animation:spin 1s infinite linear; display:inline-block">⏳</span>';
+        }
+
+        // Modal & Charts
+        let chartInstance;
+        function showModal() {
+            if (!currentData) return;
+            document.getElementById('labModal').style.display = 'flex';
+
+            // Metrics
+            document.getElementById('metricPitch').textContent = Math.round(currentData.gen.pitch || 0) + ' Hz';
+            document.getElementById('metricRMS').textContent = (currentData.info.rms || 0).toFixed(4);
+            document.getElementById('metricZCR').textContent = (currentData.info.zero_crossing_rate || 0).toFixed(4);
+
+            // Chart
+            const ctx = document.getElementById('radarCanvas').getContext('2d');
+            const probs = currentData.emo.probabilities || {};
+            const labels = ['Happy', 'Sad', 'Angry', 'Fearful', 'Disgust', 'Surprised', 'Neutral', 'Calm'];
+            const data = labels.map(l => probs[l.toLowerCase()] || 0);
+
+            if (chartInstance) chartInstance.destroy();
+            chartInstance = new Chart(ctx, {
+                type: 'radar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Emotion Probability',
+                        data: data,
+                        backgroundColor: 'rgba(129, 140, 248, 0.5)',
+                        borderColor: '#818cf8',
+                        pointBackgroundColor: '#fff',
+                        pointBorderColor: '#fff',
+                        borderWidth: 2
+                    }]
+                },
+                options: {
+                    scales: {
+                        r: {
+                            angleLines: { color: 'rgba(255, 255, 255, 0.1)' },
+                            grid: { color: 'rgba(255, 255, 255, 0.1)' },
+                            pointLabels: { color: '#cbd5e1', font: { size: 14, family: 'Outfit' } },
+                            suggestedMin: 0, suggestedMax: 1,
+                            ticks: { display: false, backdropColor: 'transparent' }
+                        }
+                    },
+                    plugins: { legend: { display: false } },
+                    maintainAspectRatio: false
+                }
+            });
+        }
+        function hideModal() { document.getElementById('labModal').style.display = 'none'; }
+
+        // History
+        const history = JSON.parse(localStorage.getItem('heart_history') || '[]');
+        function addToHistory(g, e) {
+            history.unshift({ t: new Date().toLocaleTimeString(), g, e });
+            if (history.length > 5) history.pop();
+            localStorage.setItem('heart_history', JSON.stringify(history));
+            renderHistory();
+        }
+        function renderHistory() {
+            const el = document.getElementById('historyRows');
+            el.innerHTML = history.map(h =>
+                `<div class="history-item"><span>${h.t}</span><span>${h.g} • ${h.e}</span></div>`
+            ).join('');
+        }
+        renderHistory();
+
+        // Defaults
+        Chart.defaults.color = '#94a3b8';
+        Chart.defaults.borderColor = 'rgba(255,255,255,0.1)';
+    </script>
+</body>
+
+</html>

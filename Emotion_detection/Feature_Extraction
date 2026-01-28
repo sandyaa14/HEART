@@ -1,0 +1,173 @@
+# ============================================
+# Step 2: Import libraries
+import os
+import librosa
+import numpy as np
+from sklearn.model_selection import train_test_split
+import pickle
+import kagglehub
+
+# ============================================
+# Step 3: Download RAVDESS dataset from Kaggle
+DATASET_PATH = kagglehub.dataset_download("uwrfkaggler/ravdess-emotional-speech-audio")
+print("Dataset downloaded at:", DATASET_PATH)
+
+# ============================================
+# Step 4: Define LOCAL folder to save outputs (NO Google Drive)
+SAVE_FOLDER = r"C:\Final Year\Emotion_detection"   # <-- your path
+os.makedirs(SAVE_FOLDER, exist_ok=True)
+print("Features will be saved to:", SAVE_FOLDER)
+
+# ============================================
+# Step 5: Collect audio file paths and labels
+file_paths = []
+labels = []
+
+emotion_map = {
+    '01': 'neutral',
+    '02': 'calm',
+    '03': 'happy',
+    '04': 'sad',
+    '05': 'angry',
+    '06': 'fearful',
+    '07': 'disgust',
+    '08': 'surprised'
+}
+
+for root, dirs, files in os.walk(DATASET_PATH):
+    for file in files:
+        if file.endswith('.wav'):
+            file_path = os.path.join(root, file)
+            emotion_code = file.split('-')[2]  # Based on RAVDESS file naming
+            emotion = emotion_map.get(emotion_code)
+            if emotion:
+                file_paths.append(file_path)
+                labels.append(emotion)
+
+print(f"Total samples found: {len(file_paths)}")
+
+# ============================================
+# Step 6: Check if data is already split, if not split dataset into
+#         Train (80%), Validation (10%), Test (10%)
+
+train_pkl_path = os.path.join(SAVE_FOLDER, 'ravdess_train.pkl')
+val_pkl_path = os.path.join(SAVE_FOLDER, 'ravdess_val.pkl')
+test_pkl_path = os.path.join(SAVE_FOLDER, 'ravdess_test.pkl')
+
+if os.path.exists(train_pkl_path) and os.path.exists(val_pkl_path) and os.path.exists(test_pkl_path):
+    print("✅ Data split files already exist. Skipping data splitting step.")
+    print("Loading existing split data...")
+
+    with open(train_pkl_path, 'rb') as f:
+        train_data = pickle.load(f)
+    with open(val_pkl_path, 'rb') as f:
+        val_data = pickle.load(f)
+    with open(test_pkl_path, 'rb') as f:
+        test_data = pickle.load(f)
+
+    print(f"Training samples: {len(train_data)}")
+    print(f"Validation samples: {len(val_data)}")
+    print(f"Testing samples: {len(test_data)}")
+
+    # Extract file paths and labels for feature extraction if needed
+    train_files = [item[0] for item in train_data if isinstance(item[0], str)]  # Only if file paths are stored
+    train_labels = [item[1] for item in train_data]
+    val_files = [item[0] for item in val_data if isinstance(item[0], str)]
+    val_labels = [item[1] for item in val_data]
+    test_files = [item[0] for item in test_data if isinstance(item[0], str)]
+    test_labels = [item[1] for item in test_data]
+
+    # If no file paths stored, we need to re-extract features
+    if not train_files:
+        print("⚠️  No file paths found in saved data. Need to re-extract features...")
+        # Continue with original splitting and feature extraction
+        train_files, temp_files, train_labels, temp_labels = train_test_split(
+            file_paths, labels, test_size=0.2, random_state=42, stratify=labels)
+        val_files, test_files, val_labels, test_labels = train_test_split(
+            temp_files, temp_labels, test_size=0.5, random_state=42, stratify=temp_labels)
+
+        print(f"Training samples: {len(train_files)}")
+        print(f"Validation samples: {len(val_files)}")
+        print(f"Testing samples: {len(test_files)}")
+    else:
+        print("✅ File paths found. Skipping feature extraction step as well.")
+        print("Proceeding to model training...")
+else:
+    print("📊 Data split files not found. Performing data splitting...")
+    train_files, temp_files, train_labels, temp_labels = train_test_split(
+        file_paths, labels, test_size=0.2, random_state=42, stratify=labels)
+
+    val_files, test_files, val_labels, test_labels = train_test_split(
+        temp_files, temp_labels, test_size=0.5, random_state=42, stratify=temp_labels)
+
+    print(f"Training samples: {len(train_files)}")
+    print(f"Validation samples: {len(val_files)}")
+    print(f"Testing samples: {len(test_files)}")
+
+# ============================================
+# Step 7: Feature extraction function
+def extract_features(audio_file):
+    signal, sr = librosa.load(audio_file, sr=48000)
+
+    mfcc = librosa.feature.mfcc(y=signal, sr=sr, n_mfcc=50)
+    mfcc_mean = np.mean(mfcc, axis=1)
+
+    mel = librosa.feature.melspectrogram(y=signal, sr=sr, n_mels=128)
+    mel_mean = np.mean(mel, axis=1)
+
+    zcr = np.mean(librosa.feature.zero_crossing_rate(y=signal))
+
+    spectral_contrast = np.mean(librosa.feature.spectral_contrast(y=signal, sr=sr), axis=1)
+
+    pitches, _ = librosa.piptrack(y=signal, sr=sr)
+    pitch_mean = np.mean(pitches)
+
+    energy = np.sum(signal ** 2) / len(signal)
+
+    feature_vector = np.concatenate([
+        mfcc_mean,
+        mel_mean,
+        [zcr],
+        spectral_contrast,
+        [pitch_mean, energy]
+    ])
+
+    return feature_vector
+
+# ============================================
+# Step 8: Process dataset splits with feature extraction
+def process_dataset(file_list, label_list):
+    features = []
+    for i, file in enumerate(file_list):
+        print(f"Processing file {i+1}/{len(file_list)}: {file}")
+        feature_vector = extract_features(file)
+        features.append((feature_vector, label_list[i]))
+    return features
+
+# Check if we need to extract features
+if 'train_data' not in locals() or not train_data:
+    print("🔍 Extracting features from audio files...")
+    print("Extracting training features...")
+    train_data = process_dataset(train_files, train_labels)
+
+    print("Extracting validation features...")
+    val_data = process_dataset(val_files, val_labels)
+
+    print("Extracting testing features...")
+    test_data = process_dataset(test_files, test_labels)
+
+    # ============================================
+    # Step 9: Save features in LOCAL folder
+    print("💾 Saving extracted features...")
+    with open(os.path.join(SAVE_FOLDER, 'ravdess_train.pkl'), 'wb') as f:
+        pickle.dump(train_data, f)
+
+    with open(os.path.join(SAVE_FOLDER, 'ravdess_val.pkl'), 'wb') as f:
+        pickle.dump(val_data, f)
+
+    with open(os.path.join(SAVE_FOLDER, 'ravdess_test.pkl'), 'wb') as f:
+        pickle.dump(test_data, f)
+
+    print(f"✅ All files saved successfully inside {SAVE_FOLDER}")
+else:
+    print("✅ Features already extracted and loaded. Skipping feature extraction step.")

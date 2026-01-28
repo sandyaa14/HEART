@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Gender & Emotion Detection</title>
+</head>
+<body>
+  <h2>🎤 Gender & Emotion Detection (Mic → WAV)</h2>
+
+  <button id="recordBtn">Start Recording</button>
+  <button id="stopBtn" disabled>Stop Recording</button>
+
+  <p id="msg"></p>
+  <pre id="result"></pre>
+
+<script>
+const recordBtn = document.getElementById('recordBtn');
+const stopBtn = document.getElementById('stopBtn');
+const msg = document.getElementById('msg');
+const result = document.getElementById('result');
+
+let mediaStream = null;
+let mediaRecorder = null;
+let chunks = [];
+
+// ===== Convert recorded audio to WAV =====
+async function toWavBlob(blob) {
+  const arrayBuffer = await blob.arrayBuffer();
+  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+
+  const numChannels = audioBuffer.numberOfChannels;
+  const sampleRate = audioBuffer.sampleRate;
+  const length = audioBuffer.length * numChannels * 2 + 44;
+
+  const buffer = new ArrayBuffer(length);
+  const view = new DataView(buffer);
+
+  function writeString(view, offset, string) {
+    for (let i = 0; i < string.length; i++) {
+      view.setUint8(offset + i, string.charCodeAt(i));
+    }
+  }
+
+  let offset = 0;
+
+  writeString(view, offset, 'RIFF'); offset += 4;
+  view.setUint32(offset, 36 + audioBuffer.length * numChannels * 2, true); offset += 4;
+  writeString(view, offset, 'WAVE'); offset += 4;
+  writeString(view, offset, 'fmt '); offset += 4;
+  view.setUint32(offset, 16, true); offset += 4;
+  view.setUint16(offset, 1, true); offset += 2;
+  view.setUint16(offset, numChannels, true); offset += 2;
+  view.setUint32(offset, sampleRate, true); offset += 4;
+  view.setUint32(offset, sampleRate * numChannels * 2, true); offset += 4;
+  view.setUint16(offset, numChannels * 2, true); offset += 2;
+  view.setUint16(offset, 16, true); offset += 2;
+
+  writeString(view, offset, 'data'); offset += 4;
+  view.setUint32(offset, audioBuffer.length * numChannels * 2, true); offset += 4;
+
+  const interleaved = new Int16Array(audioBuffer.length * numChannels);
+  let idx = 0;
+  for (let i = 0; i < audioBuffer.length; i++) {
+    for (let ch = 0; ch < numChannels; ch++) {
+      const s = Math.max(-1, Math.min(1, audioBuffer.getChannelData(ch)[i]));
+      interleaved[idx++] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    }
+  }
+
+  for (let i = 0; i < interleaved.length; i++) {
+    view.setInt16(offset, interleaved[i], true);
+    offset += 2;
+  }
+
+  return new Blob([view], { type: 'audio/wav' });
+}
+
+// ===== Start Recording =====
+recordBtn.onclick = async () => {
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (err) {
+    msg.textContent = 'Mic access error: ' + err.message;
+    return;
+  }
+
+  mediaRecorder = new MediaRecorder(mediaStream);
+  chunks = [];
+
+  mediaRecorder.ondataavailable = e => {
+    if (e.data.size > 0) chunks.push(e.data);
+  };
+
+  mediaRecorder.onstop = async () => {
+    msg.textContent = 'Converting to WAV...';
+
+    try {
+      const rawBlob = new Blob(chunks, { type: chunks[0]?.type || 'audio/webm' });
+      const wavBlob = await toWavBlob(rawBlob);
+
+      msg.textContent = 'Uploading & Analyzing...';
+
+      const form = new FormData();
+      form.append('file', wavBlob, 'recording.wav');
+
+      // ---- Gender API ----
+      const genderRes = await fetch('http://127.0.0.1:5000/predict_gender', {
+        method: 'POST',
+        body: form
+      });
+      const genderData = await genderRes.json();
+
+      // ---- Emotion API ----
+      const emotionRes = await fetch('http://127.0.0.1:5000/predict_emotion', {
+        method: 'POST',
+        body: form
+      });
+      const emotionData = await emotionRes.json();
+
+      result.textContent =
+        `Gender  : ${genderData.gender}\n` +
+        `Emotion : ${emotionData.emotion}`;
+
+      msg.textContent = 'Done ✔';
+
+    } catch (err) {
+      msg.textContent = 'Error: ' + err.message;
+      console.error(err);
+    }
+
+    mediaStream.getTracks().forEach(t => t.stop());
+  };
+
+  mediaRecorder.start();
+  recordBtn.disabled = true;
+  stopBtn.disabled = false;
+  msg.textContent = 'Recording...';
+};
+
+// ===== Stop Recording =====
+stopBtn.onclick = () => {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+    recordBtn.disabled = false;
+    stopBtn.disabled = true;
+    msg.textContent = 'Stopping...';
+  }
+};
+</script>
+</body>
+</html>
