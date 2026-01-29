@@ -400,7 +400,12 @@
                         <div class="confidence-fill" id="confGender"></div>
                     </div>
                 </div>
-                <div class="result-card">
+                <div class="result-card" style="position:relative;">
+                    <button id="btnWhyEmotion" onclick="showExplanation()"
+                        style="position:absolute; top:10px; right:10px; background:rgba(255,255,255,0.1); border:none; border-radius:50%; width:28px; height:28px; cursor:pointer; font-size:1rem; display:none;"
+                        title="Why this emotion?">
+                        ❓
+                    </button>
                     <div class="result-title">Detected Emotion</div>
                     <div class="result-value" id="resEmotion">--</div>
                     <div class="confidence-bg">
@@ -411,7 +416,7 @@
 
             <div class="forensics-btn-container">
                 <button id="btnForensics" class="forensics-btn" onclick="showModal()">
-                    🔬 Open Voice Forensics Lab
+                    🔬 Open Voice Lab
                 </button>
             </div>
         </div>
@@ -469,6 +474,28 @@
                     </div>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- EXPLANATION MODAL -->
+    <div id="explanationModal" onclick="if(event.target===this)hideExplanation()"
+        style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:1001; padding:20px; overflow-y:auto;">
+        <div
+            style="background:var(--card-bg); border-radius:20px; max-width:600px; margin:40px auto; padding:30px; border:1px solid rgba(255,255,255,0.1);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                <h2 style="margin:0;">🔍 Why This Emotion?</h2>
+                <button onclick="hideExplanation()"
+                    style="background:none; border:none; font-size:1.5rem; cursor:pointer; color:white;">✕</button>
+            </div>
+
+            <!-- Primary Reason -->
+            <div id="explanationPrimary"
+                style="background:rgba(129,140,248,0.1); padding:15px; border-radius:12px; margin-bottom:20px; border-left:4px solid var(--primary);">
+            </div>
+
+            <!-- Feature Analysis -->
+            <h3 style="margin:20px 0 15px;">📊 Acoustic Feature Analysis</h3>
+            <div id="explanationFeatures" style="display:grid; gap:10px;"></div>
         </div>
     </div>
 
@@ -627,6 +654,7 @@
             if (!file) return;
             setStatus('Analyzing...', true);
             document.getElementById('btnForensics').style.display = 'none';
+            document.getElementById('btnWhyEmotion').style.display = 'none';
 
             const fd = new FormData();
             fd.append('file', file, file.name || 'recording.wav');
@@ -649,13 +677,65 @@
 
                 currentData = { gen, emo, info };
                 document.getElementById('btnForensics').style.display = 'inline-block';
+                document.getElementById('btnWhyEmotion').style.display = 'flex';
 
-                addToHistory(gen.gender, emo.emotion);
+                // Log to history with ALL info
+                addToHistory(gen.gender, emo, info);
 
             } catch (e) {
                 setStatus('Error: ' + e.message, false);
             }
         }
+
+        /* --- Explanation Logic --- */
+        function showExplanation() {
+            if (!currentData) return;
+            const reasoning = generateReasoning(currentData);
+            document.getElementById('explanationPrimary').innerHTML = reasoning.primary;
+
+            const featDiv = document.getElementById('explanationFeatures');
+            featDiv.innerHTML = reasoning.detailedTable;
+
+            document.getElementById('explanationModal').style.display = 'block';
+        }
+
+        function hideExplanation() {
+            document.getElementById('explanationModal').style.display = 'none';
+        }
+
+        function generateReasoning(data) {
+            const info = data.info || {};
+            const details = data.emo?.feature_details || data.feature_details || {};
+            const pitch = details.pitch || data.gen?.pitch || 0;
+            const emotion = (data.emo?.emotion || data.emotion || "unknown").toUpperCase();
+
+            // Primary Summary based on User's requested text
+            let primary = `The system detected <strong>${emotion}</strong> because your specific acoustic fingerprint matched patterns of `;
+            if (emotion === 'SAD') primary += "subdued energy, lower pitch, and slower vocal onset.";
+            else if (emotion === 'ANGRY') primary += "high intensity, elevated pitch, and harsh vocal quality.";
+            else if (emotion === 'HAPPY') primary += "bright tonal quality, varied pitch, and moderate-to-high energy.";
+            else if (emotion === 'CALM') primary += "steady, low-energy vocal delivery and stable tonal range.";
+            else if (emotion === 'FEARFUL') primary += "tense vocal characteristics, rapid frequencies, and high pitch.";
+            else if (emotion === 'SURPRISED') primary += "sudden energy spikes and sharp pitch transitions.";
+            else primary += "balanced acoustic features relative to the training baseline.";
+
+            // Technical Details requested by user
+            const formatArr = (arr) => arr && arr.length ? `[${arr.slice(0, 3).join(', ')} ... ${arr.slice(-1)}] (Total ${arr.length})` : "--";
+
+            let detailedTable = `
+                <table style="width:100%; border-collapse:collapse; margin-top:15px; font-size:0.85rem;">
+                    <tr style="border-bottom:1px solid rgba(255,255,255,0.05);"><td style="padding:10px; color:var(--primary);">MFCCs (Mean)</td><td style="padding:10px; color:var(--text-mute); font-family:monospace;">${formatArr(details.mfcc)}</td></tr>
+                    <tr style="border-bottom:1px solid rgba(255,255,255,0.05);"><td style="padding:10px; color:var(--primary);">Mel Spectrogram</td><td style="padding:10px; color:var(--text-mute); font-family:monospace;">${formatArr(details.mel)}</td></tr>
+                    <tr style="border-bottom:1px solid rgba(255,255,255,0.05);"><td style="padding:10px; color:var(--primary);">Vocal Intensity (Energy)</td><td style="padding:10px; color:var(--text-mute); font-family:monospace;">${details.energy || info.rms || "--"}</td></tr>
+                    <tr style="border-bottom:1px solid rgba(255,255,255,0.05);"><td style="padding:10px; color:var(--primary);">Fundamental Pitch (F0)</td><td style="padding:10px; color:var(--text-mute); font-family:monospace;">${pitch} Hz</td></tr>
+                    <tr style="border-bottom:1px solid rgba(255,255,255,0.05);"><td style="padding:10px; color:var(--primary);">Zero Crossing Rate (ZCR)</td><td style="padding:10px; color:var(--text-mute); font-family:monospace;">${details.zcr || info.zero_crossing_rate || "--"}</td></tr>
+                    <tr><td style="padding:10px; color:var(--primary);">Spectral Contrast</td><td style="padding:10px; color:var(--text-mute); font-family:monospace;">${formatArr(details.spectral_contrast)}</td></tr>
+                </table>
+            `;
+
+            return { primary, detailedTable };
+        }
+
 
         function setStatus(msg, loading) {
             const el = document.getElementById('statusText');
@@ -713,21 +793,159 @@
         }
         function hideModal() { document.getElementById('labModal').style.display = 'none'; }
 
-        // History
-        const history = JSON.parse(localStorage.getItem('heart_history') || '[]');
-        function addToHistory(g, e) {
-            history.unshift({ t: new Date().toLocaleTimeString(), g, e });
-            if (history.length > 5) history.pop();
-            localStorage.setItem('heart_history', JSON.stringify(history));
-            renderHistory();
+        // History - Server Side
+        async function fetchHistory() {
+            try {
+                const res = await fetch('/get_history');
+                const history = await res.json();
+                renderHistory(history);
+            } catch (e) {
+                console.error("Failed to load history", e);
+            }
         }
-        function renderHistory() {
+
+        // Audio Player State
+        let currentAudio = null;
+        let currentBtnId = null;
+        let currentDurationId = null;
+
+        function renderHistory(history) {
             const el = document.getElementById('historyRows');
-            el.innerHTML = history.map(h =>
-                `<div class="history-item"><span>${h.t}</span><span>${h.g} • ${h.e}</span></div>`
-            ).join('');
+            if (history.length === 0) {
+                el.innerHTML = '<p style="text-align:center; color: var(--text-mute)">No recordings yet</p>';
+                return;
+            }
+
+            el.innerHTML = history.map((h, index) => {
+                return `
+                <div class="history-item" style="align-items: center;">
+                    <button id="btn-${index}" onclick="toggleAudio('${h.filename}', 'btn-${index}', 'time-${index}')" 
+                        style="background:rgba(255,255,255,0.1); border:none; cursor:pointer; font-size:1.2rem; width:40px; height:40px; border-radius:50%; margin-right:15px; display:flex; align-items:center; justify-content:center; transition:background 0.2s;" title="Play">
+                        ▶️
+                    </button>
+                    <div style="flex:1">
+                        <div style="display:flex; justify-content:space-between; align-items:center">
+                            <div style="color:white; font-weight:600">
+                                <span style="color: var(--primary)">${h.emotion}</span> 
+                                <span style="font-size:0.8em; color:var(--text-mute)">/</span>
+                                <span style="color: var(--secondary)">${h.gender}</span>
+                            </div>
+                            <div style="display:flex; align-items:center; gap:15px">
+                                <div id="time-${index}" style="font-family:monospace; font-size:0.8rem; color:var(--text-mute)">00:00</div>
+                                <button onclick="openHistoryLab(${index})" style="background:none; border:none; cursor:pointer; font-size:1.2rem;" title="Open Voice Lab">
+                                    🔬
+                                </button>
+                            </div>
+                        </div>
+                        <div style="font-size:0.8rem; opacity:0.7">${h.timestamp}</div>
+                    </div>
+                </div>
+            `}).join('');
+
+            // Store global for access
+            window.historyData = history;
         }
-        renderHistory();
+
+        function openHistoryLab(index) {
+            const h = window.historyData[index];
+            if (!h) return;
+
+            // Reconstruct currentData format
+            currentData = {
+                gen: { pitch: h.feature_details?.pitch || 0 },
+                emo: {
+                    emotion: h.emotion,
+                    confidence: h.confidence,
+                    probabilities: h.probabilities,
+                    feature_details: h.feature_details
+                },
+                info: h.info || {}
+            };
+
+            // Ensure info is populated for charts/metrics
+            if (!currentData.info.rms) currentData.info.rms = h.feature_details?.energy || 0;
+            if (!currentData.info.zero_crossing_rate) currentData.info.zero_crossing_rate = h.feature_details?.zcr || 0;
+
+            showModal();
+        }
+
+        function toggleAudio(filename, btnId, timeId) {
+            // If clicking the same button
+            if (currentBtnId === btnId && currentAudio) {
+                if (currentAudio.paused) {
+                    currentAudio.play();
+                    document.getElementById(btnId).textContent = '⏸';
+                } else {
+                    currentAudio.pause();
+                    document.getElementById(btnId).textContent = '▶️';
+                }
+                return;
+            }
+
+            // If clicking a new button, stop previous
+            if (currentAudio) {
+                currentAudio.pause();
+                if (currentBtnId) document.getElementById(currentBtnId).textContent = '▶️';
+            }
+
+            // Setup new audio
+            currentAudio = new Audio('/static/' + filename);
+            currentBtnId = btnId;
+            currentDurationId = timeId;
+
+            const btn = document.getElementById(btnId);
+            const timeDisplay = document.getElementById(timeId);
+
+            currentAudio.play();
+            btn.textContent = '⏸';
+
+            currentAudio.ontimeupdate = () => {
+                const cur = formatTime(currentAudio.currentTime);
+                const dur = formatTime(currentAudio.duration || 0);
+                timeDisplay.textContent = `${cur} / ${dur}`;
+            };
+
+            currentAudio.onended = () => {
+                btn.textContent = '▶️';
+                timeDisplay.textContent = formatTime(currentAudio.duration);
+                currentBtnId = null;
+                currentAudio = null;
+            };
+
+            // Handle metadata load for initial duration if needed, 
+            // but ontimeupdate usually catches it quickly.
+        }
+
+        function formatTime(s) {
+            if (isNaN(s)) return "00:00";
+            const m = Math.floor(s / 60);
+            const sec = Math.floor(s % 60);
+            return `${m}:${sec.toString().padStart(2, '0')}`;
+        }
+
+        async function addToHistory(gender, emotionData, audioInfo) {
+            // Call the backend log endpoint
+            try {
+                await fetch('/log_history_entry', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        filename: emotionData.filename,
+                        emotion: emotionData.emotion,
+                        gender: gender,
+                        confidence: emotionData.confidence,
+                        probabilities: emotionData.probabilities,
+                        info: audioInfo,
+                        feature_details: emotionData.feature_details
+                    })
+                });
+            } catch (e) { console.error("Log failed", e); }
+
+            // Reload list
+            setTimeout(fetchHistory, 500);
+        }
+
+        fetchHistory();
 
         // Defaults
         Chart.defaults.color = '#94a3b8';

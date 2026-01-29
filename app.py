@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, send_from_directory
 import io
 import os
 import numpy as np
@@ -7,6 +7,9 @@ import librosa
 from flask_cors import CORS
 import joblib
 from sklearn.ensemble import RandomForestClassifier
+import json
+import time
+from datetime import datetime
 
 # Try to import TensorFlow/Keras - optional for basic functionality
 try:
@@ -27,19 +30,66 @@ TRAIN_PKL_PATHS = [
 ]
 
 EMOTION_MODEL_PATH = "Emotion_detection/Models/"
+UPLOAD_FOLDER = "static/uploads"
+HISTORY_FILE = "static/history.json"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+if not os.path.exists(HISTORY_FILE):
+    with open(HISTORY_FILE, 'w') as f:
+        json.dump([], f)
+
+# =========================================================
+# History Utilities
+# =========================================================
+def save_recording(audio_bytes, suffix="rec"):
+    """Saves audio bytes to disk and returns the filename."""
+    timestamp = int(time.time())
+    filename = f"{suffix}_{timestamp}.wav"
+    filepath = os.path.join(UPLOAD_FOLDER, filename)
+    with open(filepath, "wb") as f:
+        f.write(audio_bytes)
+    return filename
+
+def log_history(filename, emotion, gender, confidence):
+    """Appends entry to history.json"""
+    try:
+        with open(HISTORY_FILE, 'r') as f:
+            history = json.load(f)
+    except:
+        history = []
+    
+    # Clean filename just in case
+    clean_filename = filename.split('/')[-1]
+
+    entry = {
+        "id": str(int(time.time())),
+        "filename": f"uploads/{clean_filename}",
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "emotion": emotion,
+        "gender": gender,
+        "confidence": float(confidence)
+    }
+    
+    # Prepend
+    history.insert(0, entry)
+    # Keep last 50
+    history = history[:50]
+    
+    with open(HISTORY_FILE, 'w') as f:
+        json.dump(history, f, indent=2)
 
 # =========================================================
 # Emotion labels (ORDER MUST MATCH TRAINING)
 # =========================================================
+# CRITICAL: This order MUST match the training script (04_deep_ensemble_meta_model.py line 55)
 EMOTION_LABELS = [
     "neutral",
-    "calm",
     "happy",
     "sad",
     "angry",
     "fearful",
     "disgust",
     "surprised",
+    "calm",
 ]
 
 # =========================================================
@@ -106,54 +156,86 @@ def load_wav_from_bytes(b):
         audio, sr = sf.read(bio)
         if audio.ndim > 1:
             audio = np.mean(audio, axis=1)
-        return audio.astype(np.float32), sr
+        audio = audio.astype(np.float32)
+
+        # 1. Trim Silence (remove start/end silence)
+        audio, _ = librosa.effects.trim(audio, top_db=30)
+
+        # 2. Normalize (Max Amplitude = 1.0)
+        # This fixes the "low energy" issue for quiet user mics
+        if np.max(np.abs(audio)) > 0:
+            audio = librosa.util.normalize(audio)
+            
+        return audio, sr
     except Exception:
         bio.seek(0)
         audio, sr = librosa.load(bio, sr=None, mono=True)
+        # Apply same processing to fallback
+        audio, _ = librosa.effects.trim(audio, top_db=30)
+        if np.max(np.abs(audio)) > 0:
+            audio = librosa.util.normalize(audio)
         return audio.astype(np.float32), sr
 
 
 # =========================================================
 # Feature extraction for DL emotion models (188 features)
+# CRITICAL: Must match Feature_Extraction script EXACTLY
 # =========================================================
 def extract_emotion_features(audio, sr):
+    """
+    Extract features matching the training script exactly.
+    Training uses: 50 MFCCs, 128 mel bins, ZCR, spectral contrast, pitch, energy
+    at 48kHz sample rate.
+    """
     audio = audio.astype(np.float64)
-
-    min_len = int(0.5 * sr)
-    if len(audio) < min_len:
-        audio = np.pad(audio, (0, min_len - len(audio)))
-
-    mfcc = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=40)
+    
+    # Resample to 48000 Hz to match training
+    if sr != 48000:
+        audio = librosa.resample(audio, orig_sr=sr, target_sr=48000)
+        sr = 48000
+    
+    # Extract features matching Feature_Extraction script
+    mfcc = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=50)  # Changed from 40 to 50
     mfcc_mean = np.mean(mfcc, axis=1)
-
-    stft = np.abs(librosa.stft(audio))
-    chroma = librosa.feature.chroma_stft(S=stft, sr=sr)
-    chroma_mean = np.mean(chroma, axis=1)
-
-    mel = librosa.feature.melspectrogram(y=audio, sr=sr)
+    
+    mel = librosa.feature.melspectrogram(y=audio, sr=sr, n_mels=128)
     mel_mean = np.mean(mel, axis=1)
+    
+    zcr = np.mean(librosa.feature.zero_crossing_rate(y=audio))
+    
+    spectral_contrast = np.mean(librosa.feature.spectral_contrast(y=audio, sr=sr), axis=1)
+    
+    pitches, _ = librosa.piptrack(y=audio, sr=sr)
+    pitch_mean = np.mean(pitches)
+    
+    energy = np.sum(audio ** 2) / len(audio)
+    
+    features = np.concatenate([
+        mfcc_mean,           # 50 features
+        mel_mean,            # 128 features
+        [zcr],               # 1 feature
+        spectral_contrast,   # 7 features (default)
+        [pitch_mean, energy] # 2 features
+    ]).astype(np.float32)
+    
+    # Categorized details for explainability
+    def safe_float(x):
+        try:
+            val = float(x)
+            return round(val, 4) if np.isfinite(val) else 0.0
+        except:
+            return 0.0
 
-    contrast = librosa.feature.spectral_contrast(S=stft, sr=sr)
-    contrast_mean = np.mean(contrast, axis=1)
-
-    try:
-        y_harmonic = librosa.effects.harmonic(audio)
-        tonnetz = librosa.feature.tonnetz(y=y_harmonic, sr=sr)
-        tonnetz_mean = np.mean(tonnetz, axis=1)
-    except Exception:
-        tonnetz_mean = np.zeros(6)
-
-    features = np.concatenate(
-        [mfcc_mean, chroma_mean, mel_mean, contrast_mean, tonnetz_mean]
-    ).astype(np.float32)
-
-    # 🔥 MUST MATCH TRAINING SIZE
-    if len(features) < 188:
-        features = np.pad(features, (0, 188 - len(features)))
-    else:
-        features = features[:188]
-
-    return features
+    details = {
+        "mfcc": [safe_float(x) for x in mfcc_mean],
+        "mel": [safe_float(x) for x in mel_mean],
+        "zcr": safe_float(zcr),
+        "spectral_contrast": [safe_float(x) for x in spectral_contrast],
+        "pitch": safe_float(pitch_mean),
+        "energy": safe_float(energy)
+    }
+    
+    return features, details
 
 
 # =========================================================
@@ -164,7 +246,7 @@ def predict_emotion(audio, sr):
     Handles sigmoid-based binary emotion models correctly
     and feeds 16 features into the meta model.
     """
-    emotion, _, _ = predict_emotion_with_confidence(audio, sr)
+    emotion, confidence, probs, model_used, feature_details = predict_emotion_with_confidence(audio, sr)
     return emotion
 
 
@@ -177,7 +259,7 @@ def predict_emotion_with_confidence(audio, sr):
     """
 
     # 1. Feature extraction
-    features = extract_emotion_features(audio, sr)
+    features, feature_details = extract_emotion_features(audio, sr)
     features = np.expand_dims(features, axis=0)  # (1, 188)
     
     # ---------------------------------------------------------
@@ -185,7 +267,7 @@ def predict_emotion_with_confidence(audio, sr):
     # ---------------------------------------------------------
     if multi_model is None:
         print("ERROR: Multi-class model not loaded")
-        return "error", 0.0
+        return "error", 0.0, {}, "Error", feature_details
 
     multi_val = multi_model.predict(features, verbose=0) # Shape (1, 8)
     
@@ -206,13 +288,13 @@ def predict_emotion_with_confidence(audio, sr):
         model = emotion_models[emotion]
         probs = model.predict(features, verbose=0)
 
-        # Handle Sigmoid vs Softmax
-        if probs.shape[1] == 1:
-            # sigmoid -> output is prob of being "True" (i.e. 'emotion')
-            p = float(probs[0][0])
+        # Handle Sigmoid output (shape can be (1,) or (1,1))
+        if len(probs.shape) == 1 or (len(probs.shape) == 2 and probs.shape[1] == 1):
+            # Sigmoid: single probability value
+            p = float(probs.flatten()[0])
             binary_preds.append(p)
         else:
-            # softmax -> [p_not, p_yes]
+            # Softmax: [p_not, p_yes]
             p_yes = float(probs[0][1])
             binary_preds.append(p_yes)
 
@@ -225,31 +307,80 @@ def predict_emotion_with_confidence(audio, sr):
     meta_inputs = np.hstack([multi_val, binary_preds])
 
     # ---------------------------------------------------------
-    # PART D: Meta Model Prediction
+    # PART D: Meta Model Prediction & Ensemble Logic
     # ---------------------------------------------------------
     if meta_model_logreg is None:
         print("ERROR: Meta Logistic Regression model not loaded")
-        return "error", 0.0
-        
+        return "error", 0.0, {}, "Error", feature_details
+
     final_pred_probs = meta_model_logreg.predict_proba(meta_inputs)
     final_class_idx = np.argmax(final_pred_probs)
     
-    confidence = float(final_pred_probs[0][final_class_idx])
+    dl_confidence = float(final_pred_probs[0][final_class_idx])
+    dl_emotion = target_emotions[final_class_idx]
     
-    # Map index back to emotion label using the same order
-    predicted_emotion = target_emotions[final_class_idx]
-    
-    # Create probability dictionary for Radar Chart
+    # Create probability dictionary for DL model
     probabilities = {
         emotion: float(prob) 
         for emotion, prob in zip(target_emotions, final_pred_probs[0])
     }
-    
-    # 🔒 Confidence-based rejection
-    if confidence < 0.35: # Slightly lower threshold for LogReg as it tends to be more conservative
-        return "uncertain", confidence, probabilities
 
-    return predicted_emotion, confidence, probabilities
+    # ---------------------------------------------------------
+    # PART E: Random Forest Fallback / Ensemble
+    # ---------------------------------------------------------
+    # Using the pre-loaded Random Forest model 'emotion_model'
+    # Default to DL result first
+    final_emotion = dl_emotion
+    final_confidence = dl_confidence
+    model_used = "DeepLearning"
+
+    # Strategy: Trust RF if DL is uncertain or predicts 'calm' (known bias)
+    if emotion_model is not None:
+        try:
+            # RF expects (1, 188) features
+            rf_probs = emotion_model.predict_proba(features)[0]
+            rf_class_idx = np.argmax(rf_probs)
+            rf_emotion = emotion_model.classes_[rf_class_idx]
+            rf_confidence = float(rf_probs[rf_class_idx])
+            
+            # Debug log
+            print(f"DEBUG: DL({dl_emotion}, {dl_confidence:.2f}) vs RF({rf_emotion}, {rf_confidence:.2f})")
+
+            # Condition 1: If DL is 'calm' and confidence is not extremely high, check RF
+            if dl_emotion == 'calm' and dl_confidence < 0.85:
+                 if rf_confidence > 0.4:
+                     print(f"ℹ️ DL predicted 'calm' (conf {dl_confidence:.2f}). Switching to RF '{rf_emotion}' (conf {rf_confidence:.2f}).")
+                     final_emotion = rf_emotion
+                     final_confidence = rf_confidence
+                     model_used = "RandomForest (Bias Correction)"
+                 else:
+                     print(f"ℹ️ DL predicting 'calm' (conf {dl_confidence:.2f}). RF '{rf_emotion}' is too low (conf {rf_confidence:.2f}). Keeping DL.")
+
+            # Condition 2: If DL is generally uncertain (< 0.50) and RF is confident
+            elif dl_confidence < 0.50 and rf_confidence > dl_confidence and rf_confidence > 0.4:
+                 print(f"ℹ️ DL uncertain. Switching to Random Forest '{rf_emotion}'.")
+                 final_emotion = rf_emotion
+                 final_confidence = rf_confidence
+                 model_used = "RandomForest (Fallback)"
+            
+            # Merge probabilities for UI (optional, but good for radar chart)
+            # We will blend them 50/50 if we want a true ensemble, 
+            # but for now let's just update the specific chosen emotion's prob to match the choice
+            if model_used.startswith("RandomForest"):
+                 # Update probs to reflect RF
+                  probabilities = {
+                    cls: float(prob) 
+                    for cls, prob in zip(emotion_model.classes_, rf_probs)
+                }
+
+        except Exception as e:
+            print(f"⚠️ RF Prediction failed: {e}")
+
+    # 🔒 Final Confidence Check
+    if final_confidence < 0.35: 
+        return "uncertain", final_confidence, probabilities, "Uncertain", feature_details
+
+    return final_emotion, final_confidence, probabilities, model_used, feature_details
 
 
 # =========================================================
@@ -297,53 +428,124 @@ def home():
     return render_template("index.html")
 
 
+# =========================================================
+# Load Gender Model
+# =========================================================
+GENDER_MODEL_PATH = "models/gender_classifier.pkl"
+GENDER_SCALER_PATH = "models/gender_scaler.pkl"
+gender_model = None
+gender_scaler = None
+
+if os.path.exists(GENDER_MODEL_PATH) and os.path.exists(GENDER_SCALER_PATH):
+    try:
+        gender_model = joblib.load(GENDER_MODEL_PATH)
+        gender_scaler = joblib.load(GENDER_SCALER_PATH)
+        print("✅ Gender classification model loaded")
+    except Exception as e:
+        print(f"⚠️ Gender model loading failed: {e}")
+else:
+    print("ℹ️ Gender model not found - training required")
+
+from gender_features import extract_gender_features
+
 @app.route("/predict_gender", methods=["POST"])
 def predict_gender():
     audio, sr = load_wav_from_bytes(request.files["file"].read())
 
-    f0, _, _ = librosa.pyin(audio, fmin=50, fmax=400, sr=sr)
-    f0 = f0[~np.isnan(f0)]
+    # 1. Extract Features
+    try:
+        features = extract_gender_features(audio, sr)
+        features = features.reshape(1, -1)
+        
+        # 2. Prediction
+        if gender_model and gender_scaler:
+            features_scaled = gender_scaler.transform(features)
+            
+            # Predict class and probability
+            prediction = gender_model.predict(features_scaled)[0]
+            probs = gender_model.predict_proba(features_scaled)[0]
+            
+            # Get confidence
+            class_idx = np.where(gender_model.classes_ == prediction)[0][0]
+            confidence = probs[class_idx]
+            
+            gender = prediction
+            
+        else:
+            # Fallback to simple pitch logic if model fails
+            print("⚠️ Using fallback pitch logic for gender")
+            f0, _, _ = librosa.pyin(audio, fmin=50, fmax=400, sr=sr)
+            f0 = f0[~np.isnan(f0)]
+            if len(f0) > 0:
+                pitch = np.median(f0)
+                gender = "male" if pitch < 165 else "female"
+                confidence = 0.60 # Low confidence for fallback
+            else:
+                return jsonify({"gender": "unknown", "confidence": 0.0, "pitch": 0.0})
 
-    if len(f0) == 0:
-        return jsonify({"gender": "unknown", "confidence": 0.0, "pitch": 0.0})
+        # Calculate pitch for display purposes
+        f0, _, _ = librosa.pyin(audio, fmin=50, fmax=400, sr=sr)
+        f0 = f0[~np.isnan(f0)]
+        pitch = np.median(f0) if len(f0) > 0 else 0.0
 
-    pitch = np.median(f0)
-    gender = "male" if pitch < 165 else "female"
+        print(f"DEBUG: Gender Predict - {gender} ({confidence:.2f})")
 
-    # Calculate confidence based on distance from threshold
-    threshold = 165
-    if gender == "male":
-        # For male: lower pitch = higher confidence (max at 50Hz, min at 165Hz)
-        confidence = max(0.5, min(0.95, 1.0 - (pitch - 50) / (threshold - 50)))
-    else:
-        # For female: higher pitch = higher confidence (min at 165Hz, max at 300Hz)
-        confidence = max(0.5, min(0.95, (pitch - threshold) / (300 - threshold)))
+        return jsonify(
+            {
+                "gender": gender,
+                "confidence": round(float(confidence), 3),
+                "pitch": round(float(pitch), 2),
+                "model": "ML Model" if gender_model else "Heuristic (Fallback)"
+            }
+        )
 
-    return jsonify(
-        {
-            "gender": gender,
-            "confidence": round(confidence, 3),
-            "pitch": round(float(pitch), 2),
-        }
-    )
+    except Exception as e:
+        print(f"ERROR in gender prediction: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/predict_emotion", methods=["POST"])
 def predict_emotion_api():
-    audio, sr = load_wav_from_bytes(request.files["file"].read())
+    file_bytes = request.files["file"].read()
+    audio, sr = load_wav_from_bytes(file_bytes)
+    
+    # 0. Check for silence/low volume
+    rms = np.sqrt(np.mean(audio**2))
+    if rms < 0.005:
+        print(f"⚠️ Silence detected (RMS: {rms:.4f})")
+        return jsonify(
+            {
+                "emotion": "neutral",
+                "confidence": 0.0,
+                "probabilities": {},
+                "model": "Silence Detector",
+                "warning": "Volume too low. Please speak closer to the mic."
+            }
+        )
 
     if not emotion_models or meta_model_logreg is None:
         return jsonify({"error": "DL emotion models not loaded"}), 500
 
-    # Get emotion prediction with confidence
-    emotion, confidence, probabilities = predict_emotion_with_confidence(audio, sr)
+    # Get emotion prediction with confidence and model info
+    emotion, confidence, probabilities, model_name, feature_details = predict_emotion_with_confidence(audio, sr)
+    
+    # --- SAVE HISTORY ---
+    # We need to save the original bytes (or re-encoded wav)
+    fname = save_recording(file_bytes)
+    
+    # We return the filename so the frontend can trigger the log with full metadata (gender + emotion)
+    # log_history(fname, emotion, "--", confidence) <- REMOVED
+
+    print(f"DEBUG: Emotion Predict - {emotion} ({confidence:.2f}) [Model: {model_name}]")
 
     return jsonify(
         {
             "emotion": emotion,
             "confidence": round(confidence, 3),
             "probabilities": probabilities,
-            "model": "DeepLearning (Ensemble)",
+            "model": model_name,
+            "filename": fname,
+            "feature_details": feature_details
         }
     )
 
@@ -369,6 +571,54 @@ def get_audio_info():
             }
         )
     except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/get_history", methods=["GET"])
+def get_history():
+    try:
+        with open(HISTORY_FILE, 'r') as f:
+            data = json.load(f)
+        return jsonify(data)
+    except:
+        return jsonify([])
+
+
+@app.route("/log_history_entry", methods=["POST"])
+def log_history_entry():
+    data = request.json
+    try:
+        # We now expect more data
+        # filename, emotion, gender, confidence are expanding
+        # We will store everything passed in 'details' or just flat
+        
+        with open(HISTORY_FILE, 'r') as f:
+            history = json.load(f)
+            
+        clean_filename = data.get("filename").replace("uploads/", "").split('/')[-1]
+        
+        entry = {
+            "id": str(int(time.time())),
+            "filename": f"uploads/{clean_filename}",
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "emotion": data.get("emotion"),
+            "gender": data.get("gender"),
+            "confidence": float(data.get("confidence", 0)),
+            # New fields for Lab
+            "probabilities": data.get("probabilities", {}),
+            "info": data.get("info", {}),
+            "feature_details": data.get("feature_details", {})
+        }
+        
+        history.insert(0, entry)
+        history = history[:50]
+        
+        with open(HISTORY_FILE, 'w') as f:
+            json.dump(history, f, indent=2)
+
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        print(f"Error logging history: {e}")
         return jsonify({"error": str(e)}), 500
 
 
